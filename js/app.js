@@ -16,9 +16,9 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const REST_SECONDS = 90, WATER_STEP = 500;
 
 let state, today = M.dateKey(), toastTimer, lastRoute = '';
-const ui = { sheet: null, vals: {}, editFav: false, rest: null, pendingSetup: null };
+const ui = { sheet: null, vals: {}, editFav: false, rest: null, pendingSetup: null, route: null, setupHash: '' };
 
-const route = () => { const r = location.hash.slice(1); return ROUTES.includes(r) ? r : 'today'; };
+const route = () => { const r = ui.setupHash ? ui.route : location.hash.slice(1); return ROUTES.includes(r) ? r : 'today'; };
 const day = () => state.days[today] || M.blankDay();
 const dayOf = s => (s.days[today] ??= M.blankDay());
 const dateOf = key => new Date(key + 'T12:00:00');
@@ -70,10 +70,18 @@ function ring(score) {
   const c = 2 * Math.PI * 52;
   return `<div class="ring"><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" class="track"/><circle cx="60" cy="60" r="52" class="fill" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - score / 100)}"/></svg><div><strong>${score}</strong><small>score</small></div></div>`;
 }
-function macro(label, value, target, unit, color, cap) {
+function macro(label, value, target, unit, color, cap, min) {
   const over = cap && target && value > target * 1.05;
-  return `<div class="macro"><div class="macroTop"><span>${label}</span><strong>${fmt(value)}<small> / ${target ? fmt(target) : '?'} ${unit}</small></strong></div>${bar(target ? value / target : 0, over ? 'var(--bad)' : color)}${target ? '' : '<a class="link" href="#settings">Set your target</a>'}</div>`;
+  return `<div class="macro"><div class="macroTop"><span>${label}</span><strong>${fmt(value)}<small> / ${target ? fmt(target) : '?'} ${unit}</small></strong></div>${bar(target ? value / target : 0, over ? 'var(--bad)' : color)}${target ? (min && min < target ? `<small class="range">Range ${fmt(min)}–${fmt(target)} ${unit}</small>` : '') : '<a class="link" href="#settings">Set your target</a>'}</div>`;
 }
+const macros = t => macro('Calories', t.kcal, state.targets.kcal, 'kcal', 'var(--food)', true, state.targets.kcalMin) + macro('Protein', t.protein, state.targets.protein, 'g', 'var(--ok)');
+const range = g => (g.min === g.max ? `${g.min}` : `${g.min}–${g.max}`);
+function phaseLine() {
+  const p = M.currentPhase(state); if (!p) return '';
+  return `<a class="phase" href="#settings"><span class="pill on">${esc(p.name)}</span>${p.until ? `<span class="pill">until ${dateOf(p.until).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>` : ''}${p.goal ? `<span class="pill">🎯 ${range(p.goal)} kg</span>` : ''}</a>`;
+}
+const reviewCard = () => (state.review && M.dow(today) === state.review.day ? `<a class="card review" href="#body"><strong>📋 ${DAYS[state.review.day]} check</strong><span>${esc(state.review.text)}</span></a>` : '');
+const emptySetup = () => (standalone && !M.hasData(state) && !state.profile.name ? `<section class="card empty"><p class="bigEmoji">🔗</p><h2>Load your setup</h2><p>Copy your personal setup link. Then tap here.</p><button class="big primary" data-action="setup-paste">Paste setup link</button></section>` : '');
 const stepper = (bind, step, unit, label) => `<div class="stepper"><button type="button" class="stepBtn" data-step="${-step}" aria-label="Less ${label}">−</button><label><span class="sr">${label}</span><input inputmode="decimal" data-bind="${bind}" value="${esc(ui.vals[bind] ?? '')}" placeholder="0" autocomplete="off" enterkeyhint="done"><em>${unit}</em></label><button type="button" class="stepBtn" data-step="${step}" aria-label="More ${label}">+</button></div>`;
 const field = (name, label, value = '', extra = '') => `<label class="field"><span>${label}</span><input name="${name}" value="${esc(value ?? '')}" autocomplete="off" ${extra}></label>`;
 const numField = (name, label, value) => field(name, label, value, 'inputmode="decimal" placeholder="?"');
@@ -89,7 +97,8 @@ function viewToday() {
   const r = M.rewards(state, today), t = M.totals(day());
   return top(`Hey ${esc(state.profile.name || 'there')} 👋`, longDate(today)) + `
   <section class="card hero">${ring(r.score)}<div class="heroCopy"><div class="lvl"><strong>Level ${r.level}</strong><span>${r.streak ? `🔥 ${r.streak} day${r.streak > 1 ? 's' : ''}` : '✨ Start today'}</span></div>${bar(r.intoLevel / M.XP_PER_LEVEL, 'var(--accent)')}<small>${r.intoLevel} / ${M.XP_PER_LEVEL} XP · ${r.done} of ${r.total} done</small></div></section>
-  <section class="card">${macro('Calories', t.kcal, state.targets.kcal, 'kcal', 'var(--food)', true)}${macro('Protein', t.protein, state.targets.protein, 'g', 'var(--ok)')}</section>
+  ${emptySetup()}${phaseLine()}${reviewCard()}
+  <section class="card">${macros(t)}</section>
   <h2>Today's list</h2><div class="tiles">${M.checklist(state, today).map(tile).join('')}</div>
   <p class="foot">Saved on this phone only.</p>`;
 }
@@ -121,7 +130,7 @@ function viewFood() {
   const d = day(), t = M.totals(d);
   const favs = state.favourites.map(f => `<button class="fav ${M.favouriteReady(f) ? '' : 'todo'}" data-action="fav" data-id="${esc(f.id)}">${f.photo ? `<img src="${esc(f.photo)}" alt="">` : `<span class="favEmoji" aria-hidden="true">${esc(f.emoji || '🍽️')}</span>`}<strong>${esc(f.name)}</strong><small>${foodMeta(f)}${f.estimate && M.favouriteReady(f) ? ' · ≈ estimate' : ''}</small>${ui.editFav ? '<span class="editDot">✏️</span>' : ''}</button>`).join('');
   return top('Food 🍗', longDate(today)) + `
-  <section class="card">${macro('Calories', t.kcal, state.targets.kcal, 'kcal', 'var(--food)', true)}${macro('Protein', t.protein, state.targets.protein, 'g', 'var(--ok)')}<p class="sub">Carbs ${fmt(t.carbs)} g · Fat ${fmt(t.fat)} g</p></section>
+  <section class="card">${macros(t)}<p class="sub">Carbs ${fmt(t.carbs)} g · Fat ${fmt(t.fat)} g</p></section>
   <button class="big primary" data-action="food-open">+ Add food</button>
   ${state.favourites.length ? `<div class="rowHead"><h2>${ui.editFav ? 'Tap one to edit' : 'Quick add'}</h2><button class="link" data-action="fav-mode">${ui.editFav ? 'Done' : 'Edit'}</button></div><div class="favs" data-key="food">${favs}</div>` : ''}
   <h2>Eaten today</h2>${d.food.length ? `<ul class="list">${d.food.map(f => `<li><span class="ico" aria-hidden="true">${esc(f.emoji || '🍽️')}</span><div><strong>${esc(f.name)}</strong><small>${fmt(f.kcal)} kcal · ${fmt(f.protein)} g protein</small></div><button class="x" data-action="food-remove" data-id="${esc(f.id)}" aria-label="Remove ${esc(f.name)}">✕</button></li>`).join('')}</ul>` : '<p class="muted pad">Nothing yet. Tap a food above.</p>'}`;
@@ -135,9 +144,13 @@ function pickExercise(name) {
   ui.vals['gym.weight'] = last ? String(last.weight) : '';
   ui.vals['gym.reps'] = last ? String(last.reps) : '8';
 }
+function weekPlan() {
+  const now = (M.dow(today) + 6) % 7;
+  return `<h2>Your week</h2>${state.gymNote ? `<p class="tip">📍 ${esc(state.gymNote)}</p>` : ''}<section class="card week">${state.split.map((name, i) => `<div class="weekRow ${i === now ? 'now' : ''}"><strong>${DAYS[(i + 1) % 7]}</strong><div class="planDay"><b>${esc(name || 'Rest')}</b>${state.splitNotes[i] ? `<small>${esc(state.splitNotes[i])}</small>` : ''}</div></div>`).join('')}</section><button class="link center" data-action="split-edit">Edit week</button>`;
+}
 function viewGym() {
-  const d = day(), suggested = M.splitToday(state, today);
-  if (!d.gymSplit) return top('Gym 🏋️', longDate(today)) + `<section class="card empty"><p class="bigEmoji">${d.gymDone ? '✅' : suggested.toLowerCase() === 'rest' ? '😴' : '💪'}</p><h2>${d.gymDone ? 'Gym ticked today' : suggested.toLowerCase() === 'rest' ? 'Rest day' : esc(suggested)}</h2><p>${d.gymDone ? 'Want to log your sets too?' : 'Tap start. Then log each set.'}</p><button class="big primary" data-action="gym-start">Start workout</button></section>`;
+  const d = day(), suggested = M.splitToday(state, today), note = state.splitNotes[(M.dow(today) + 6) % 7];
+  if (!d.gymSplit) return top('Gym 🏋️', longDate(today)) + `<section class="card empty"><p class="bigEmoji">${d.gymDone ? '✅' : suggested.toLowerCase() === 'rest' ? '😴' : '💪'}</p><h2>${d.gymDone ? 'Gym ticked today' : suggested.toLowerCase() === 'rest' ? 'Rest day' : esc(suggested)}</h2><p>${d.gymDone ? 'Want to log your sets too?' : esc(note) || 'Tap start. Then log each set.'}</p><button class="big primary" data-action="gym-start">Start workout</button></section>${weekPlan()}`;
   const names = [...new Set([...d.sets.map(x => x.exercise), ...M.exercisesFor(state, d.gymSplit)])];
   const current = ui.vals['gym.exercise'] || '';
   const best = current ? M.bestBefore(state, current, today) : null;
@@ -175,8 +188,11 @@ function viewBody() {
   const change = avg !== null && prev !== null ? avg - prev : null;
   const recent = [...state.body].sort((a, b) => b.date.localeCompare(a.date));
   const entry = b => `<li><div><strong>${b.weight ?? '?'} kg${b.waist ? ` · ${b.waist} cm` : ''}</strong><small>${longDate(b.date)}</small></div><button class="x" data-action="body-remove" data-id="${esc(b.id)}" aria-label="Remove entry">✕</button></li>`;
+  const phase = M.currentPhase(state), goal = phase?.goal, prog = M.goalProgress(state, avg);
+  const goalCard = goal || state.start ? `<section class="card goal"><div class="goalRow">${state.start ? `<div><small>Start</small><strong>${state.start.weight}<em> kg</em></strong><span>${esc(state.start.label)}</span></div>` : ''}${goal ? `<div><small>🎯 ${esc(phase.name)} goal</small><strong>${range(goal)}<em> kg</em></strong><span>${esc(goal.label)}</span></div>` : ''}</div>${prog !== null ? bar(prog, 'var(--body)') + `<small>${Math.round(prog * 100)}% of the way</small>` : ''}${state.review ? `<p class="sub">📋 ${DAYS[state.review.day]} check: ${esc(state.review.text)}</p>` : ''}</section>` : '';
   return top('Body ⚖️', longDate(today)) + `
   <section class="card avg"><small>7-day average</small><strong>${avg !== null ? avg.toFixed(1) : '?'}<em> kg</em></strong>${change !== null ? `<span class="pill">${change > 0 ? '▲' : change < 0 ? '▼' : '•'} ${Math.abs(change).toFixed(1)} kg vs last week</span>` : avg === null ? '<span class="muted">Log your weight to start.</span>' : ''}</section>
+  ${goalCard}
   <section class="card" data-key="weight"><h2>${mine ? 'Today ✅' : 'This morning'}</h2>${stepper('body.weight', .1, 'kg', 'Weight')}<p class="sub">Waist at belly button (optional)</p>${stepper('body.waist', .5, 'cm', 'Waist')}<button class="big primary" data-action="body-save">${mine ? 'Update' : 'Save ✅'}</button></section>
   <section class="card"><h2>Weight</h2>${chart(rows.slice(-30))}</section>
   ${recent.length ? `<ul class="list">${recent.slice(0, 4).map(entry).join('')}</ul>${recent.length > 4 ? `<details><summary>Show ${recent.length - 4} more</summary><ul class="list">${recent.slice(4).map(entry).join('')}</ul></details>` : ''}` : ''}
@@ -186,13 +202,15 @@ function viewBody() {
 
 // ---------- Settings ----------
 function viewSettings() {
-  const t = state.targets;
+  const t = state.targets, phase = M.currentPhase(state);
   return `<header class="top"><div><a class="back" href="#today">‹ Back</a><h1>Settings ⚙️</h1></div></header>
-  <form class="card" data-form="settings"><h2>You</h2>${field('name', 'Your name', state.profile.name, 'maxlength="40"')}<h2>Daily targets</h2>${numField('kcal', 'Calories (kcal)', t.kcal)}${numField('protein', 'Protein (g)', t.protein)}${numField('water', 'Water (L)', t.water)}<button class="big primary">Save</button></form>
+  <form class="card" data-form="settings"><h2>You</h2>${field('name', 'Your name', state.profile.name, 'maxlength="40"')}${field('born', 'Born', state.profile.born, 'type="date"')}${numField('height', 'Height (cm)', state.profile.height)}${state.profile.notes.length ? `<ul class="notes">${state.profile.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+  ${state.phases.length ? `<h2>Phase</h2><div class="seg">${state.phases.map(p => `<button type="button" data-action="phase" data-id="${esc(p.id)}" class="${p.id === state.phase ? 'on' : ''}">${esc(p.name)}</button>`).join('')}</div>${phase?.note ? `<p class="sub">${esc(phase.note)}</p>` : ''}` : ''}
+  <h2>Daily targets${phase ? ' · ' + esc(phase.name) : ''}</h2>${numField('kcal', 'Calories (kcal)', t.kcal)}${numField('kcalMin', 'Calories, low end (optional)', t.kcalMin)}${numField('protein', 'Protein (g)', t.protein)}${numField('water', 'Water (L)', t.water)}<button class="big primary">Save</button></form>
   <section class="card"><h2>Look</h2><div class="seg"><button data-action="theme" data-value="dark" class="${state.settings.theme === 'dark' ? 'on' : ''}">🌙 Dark</button><button data-action="theme" data-value="light" class="${state.settings.theme === 'light' ? 'on' : ''}">☀️ Light</button></div></section>
   <section class="card"><h2>Backup</h2><p class="sub">Your data lives on this phone only. Save a backup file now and then.</p><button class="big quiet" data-action="export">⬇️ Save backup</button><label class="big quiet fileBtn">⬆️ Load backup<input type="file" accept="application/json,.json" data-file="import" hidden></label></section>
-  <section class="card"><h2>More</h2><button class="big quiet" data-action="shots-manage">💉 Edit shots</button><button class="big quiet" data-action="setup-open">🔗 Paste setup link</button>${standalone ? '' : '<button class="big quiet" data-action="install-help">📲 Add to Home Screen</button>'}</section>
-  ${disclaimer()}<p class="foot">Chad v2</p>`;
+  <section class="card"><h2>More</h2><button class="big quiet" data-action="shots-manage">💉 Edit shots</button><button class="big quiet" data-action="split-edit">🏋️ Edit gym week</button><button class="big quiet" data-action="setup-open">🔗 Paste setup link</button>${standalone ? '' : '<button class="big quiet" data-action="install-help">📲 Add to Home Screen</button>'}</section>
+  ${disclaimer()}<p class="foot">Chad v3</p>`;
 }
 
 // ---------- sheets ----------
@@ -214,8 +232,9 @@ function sheetHtml() {
     ${p.anchor ? `<button type="button" class="link center" data-action="week-reset">Change which week I am on</button>` : ''}
     <button class="big primary">Save</button>${s.isNew ? '' : '<button type="button" class="link center danger" data-action="shot-delete">Delete this shot</button>'}</form>`); }
   if (s.type === 'photo') { const p = state.photos.find(x => x.id === s.id); return p ? wrap(longDate(p.date), `<img class="fullPhoto" src="${esc(p.data)}" alt="Progress photo"><button class="link center danger" data-action="photo-delete" data-id="${esc(p.id)}">Delete photo</button>`) : ''; }
+  if (s.type === 'split-edit') return wrap('Your gym week', `<form data-form="split">${state.split.map((name, i) => `<div class="grid2">${field('day' + i, DAYS[(i + 1) % 7], name, 'maxlength="60" placeholder="Rest"')}${field('note' + i, 'Note', state.splitNotes[i], 'maxlength="120"')}</div>`).join('')}${field('gymNote', 'Where (optional)', state.gymNote, 'maxlength="200"')}<button class="big primary">Save</button></form>`);
   if (s.type === 'setup') return wrap('Paste setup link', `<form data-form="setup"><label class="field"><span>Your personal setup link</span><textarea name="link" rows="4" required placeholder="https://…#setup=…"></textarea></label><button class="big primary">Load setup</button></form>`);
-  if (s.type === 'setup-confirm') return wrap('Load your setup?', `<p class="sub">This replaces your shots, favourites and targets. Your logs stay.</p><div class="stack"><button class="big primary" data-action="setup-yes">Yes, load it</button><button class="big quiet" data-action="sheet-close">No</button></div>`);
+  if (s.type === 'setup-confirm') return wrap('Load your setup?', `<p class="sub">This updates your shots, favourites, targets and plan. Your logs stay.</p><div class="stack"><button class="big primary" data-action="setup-yes">Yes, load it</button><button class="big quiet" data-action="setup-no">No</button></div>`);
   if (s.type === 'import-confirm') return wrap('Load this backup?', `<p class="sub">This replaces everything on this phone with the backup file.</p><div class="stack"><button class="big primary" data-action="import-yes">Yes, replace</button><button class="big quiet" data-action="sheet-close">No</button></div>`);
   return '';
 }
@@ -241,7 +260,7 @@ function renderInstall(force = false) {
   installEl.innerHTML = `<div class="installCard"><img src="assets/icon-192.png" alt="" width="84" height="84"><h1>Add Chad to your Home Screen</h1>
   <svg class="phone" viewBox="0 0 200 150" aria-hidden="true"><rect x="60" y="4" width="80" height="142" rx="14" class="ph"/><rect x="68" y="14" width="64" height="100" rx="6" class="scr"/><g class="share"><rect x="90" y="126" width="20" height="14" rx="3"/><path d="M100 132v-14m-5 5 5-5 5 5"/></g><path class="arrow" d="M160 96c0 22-14 34-36 36m8-7-9 7 9 6"/></svg>
   <ol><li><b>1</b><span>Tap <strong>Share</strong> ⬆️</span></li><li><b>2</b><span>Tap <strong>Add to Home Screen</strong></span></li><li><b>3</b><span>Tap <strong>Add</strong></span></li></ol>
-  ${ui.pendingSetup ? '<p class="ok">✅ Your personal setup comes with it.</p>' : ''}<button class="link" data-action="install-skip">Not now</button></div>`;
+  ${ui.pendingSetup ? '<p class="ok">✅ Your personal setup comes with it.</p><button class="big quiet" data-action="setup-copy">Copy setup link (backup)</button>' : ''}<button class="link" data-action="install-skip">Not now</button></div>`;
 }
 
 // ---------- actions ----------
@@ -261,7 +280,8 @@ async function downscale(file, max, quality = .72) {
     return c.toDataURL('image/jpeg', quality);
   } finally { URL.revokeObjectURL(url); }
 }
-function readSetup(text) { const m = String(text).match(/setup=([A-Za-z0-9_-]+)/); if (!m) throw Error('That is not a setup link'); return { payload: M.decodeSetup(m[1]), mark: M.setupMark(m[1]) }; }
+const SETUP_RE = /setup=((?:z\.)?[A-Za-z0-9_-]+)/;
+async function readSetup(text) { const m = String(text).match(SETUP_RE); if (!m) throw Error('That is not a setup link'); return { payload: await M.decodeSetup(m[1]), mark: M.setupMark(m[1]) }; }
 async function runSetup(setup) { const ok = await commit(s => M.applySetup(s, setup.payload, setup.mark), 'Setup loaded ✅'); closeSheet(); return ok; }
 
 const actions = {
@@ -334,13 +354,19 @@ const actions = {
   async 'import-yes'() { const data = ui.sheet.data; closeSheet(); ui.vals = {}; await commit(() => data, 'Backup loaded ✅'); },
   'setup-open': () => openSheet({ type: 'setup' }),
   'setup-yes': () => runSetup(ui.sheet.setup),
+  'setup-no'() { try { localStorage.setItem('chad-setup-no', ui.sheet.setup.mark); } catch {} closeSheet(); },
+  async 'setup-copy'(el) { try { await navigator.clipboard.writeText(location.href); el.textContent = 'Copied ✅'; } catch { toast('Copy did not work. Copy the address instead.'); } },
+  async 'setup-paste'() { let text = ''; try { text = await navigator.clipboard.readText(); } catch {} let setup; try { setup = await readSetup(text); } catch { return openSheet({ type: 'setup' }); } return runSetup(setup); },
+  phase: el => commit(s => M.setPhase(s, el.dataset.id)),
+  'split-edit': () => openSheet({ type: 'split-edit' }),
   'install-help': () => renderInstall(true),
   'install-skip'() { localStorage.setItem('chad-install-skip', '1'); renderInstall(); },
   'sheet-close': closeSheet
 };
 
 const forms = {
-  settings(f) { return commit(s => { s.profile.name = String(f.get('name')).trim(); for (const k of ['kcal', 'protein', 'water']) s.targets[k] = num(f.get(k)) || null; }, 'Saved ✅'); },
+  settings(f) { return commit(s => { s.profile.name = String(f.get('name')).trim(); s.profile.born = M.validDate(f.get('born')) ? f.get('born') : ''; s.profile.height = num(f.get('height')) || null; M.setTargets(s, Object.fromEntries(['kcal', 'kcalMin', 'protein', 'water'].map(k => [k, num(f.get(k)) || null]))); }, 'Saved ✅'); },
+  split(f) { closeSheet(); return commit(s => { s.split = s.split.map((_, i) => String(f.get('day' + i)).trim() || 'Rest'); s.splitNotes = s.splitNotes.map((_, i) => String(f.get('note' + i)).trim()); s.gymNote = String(f.get('gymNote')).trim(); }, 'Saved ✅'); },
   exercise(f) { const name = String(f.get('name')).trim(); if (!name) return; closeSheet(); pickExercise(name); render(); },
   async food(f) {
     const name = String(f.get('name')).trim(), kcal = num(f.get('kcal')), protein = num(f.get('protein'));
@@ -364,7 +390,7 @@ const forms = {
     closeSheet();
     return commit(s => { const i = s.shots.findIndex(x => x.id === next.id); if (i >= 0) s.shots[i] = next; else s.shots.push(next); }, 'Saved ✅');
   },
-  setup(f) { try { const setup = readSetup(f.get('link')); if (M.hasData(state)) openSheet({ type: 'setup-confirm', setup }); else return runSetup(setup); } catch (e) { toast(e.message.includes('setup') ? e.message : 'That link did not work'); } }
+  async setup(f) { try { const setup = await readSetup(f.get('link')); if (M.hasData(state)) openSheet({ type: 'setup-confirm', setup }); else return runSetup(setup); } catch (e) { toast(e.message.includes('setup') ? e.message : 'That link did not work'); } }
 };
 
 const files = {
@@ -403,30 +429,51 @@ document.addEventListener('contextmenu', e => { if (!e.target.closest('input, te
 // Keep sheets above the iOS keyboard.
 if (window.visualViewport) { const fit = () => { document.documentElement.style.setProperty('--kb', Math.max(0, innerHeight - visualViewport.height - visualViewport.offsetTop) + 'px'); if (ui.sheet) scrollTo(0, 0); }; visualViewport.addEventListener('resize', fit); visualViewport.addEventListener('scroll', fit); }
 
-addEventListener('hashchange', async () => { if (ui.sheet) closeSheet(); ui.editFav = false; if (await handleSetupLink()) { render(); renderInstall(); if (ui.setupToast) { ui.setupToast = false; toast('Your setup is loaded ✅'); } return; } render(); });
+addEventListener('hashchange', async () => {
+  // iPhone Safari with a setup link: keep the link in the address (Add to Home Screen copies the address), move the tab in memory.
+  if (ui.setupHash && location.hash !== ui.setupHash) { const r = location.hash.slice(1); if (ROUTES.includes(r)) ui.route = r; history.replaceState(null, '', location.pathname + location.search + ui.setupHash); if (ui.sheet) closeSheet(); ui.editFav = false; render(); return; }
+  if (ui.sheet) closeSheet(); ui.editFav = false; if (await handleSetupLink()) { render(); renderInstall(); if (ui.setupToast) { ui.setupToast = false; toast('Your setup is loaded ✅'); } return; } render(); });
 document.addEventListener('visibilitychange', async () => { if (document.hidden || !state) return; today = M.dateKey(); try { state = await read(); render(); } catch {} });
 
 // ---------- start ----------
 // A personal setup link: #setup=<base64url JSON>. The part after # never leaves the phone.
+const SETUP_CACHE = 'chad-setup', SETUP_KEY = './__setup';
+// Second road into the installed app: a copy of the link data in Cache Storage on this phone (never sent anywhere).
+async function stashSetup(text) { try { await (await caches.open(SETUP_CACHE)).put(SETUP_KEY, new Response(text, { headers: { 'content-type': 'text/plain' } })); } catch {} }
+async function stashedSetup() { try { const r = await (await caches.open(SETUP_CACHE)).match(SETUP_KEY); return r ? await r.text() : ''; } catch { return ''; } }
+// Applies a setup once. Older or declined setups are ignored. A phone that already has data is asked first.
+async function offerSetup(setup) {
+  const rev = M.setupRev(setup.payload), cfg = state.settings;
+  if (cfg.setupApplied === setup.mark || rev < cfg.setupRev) return;
+  let declined = ''; try { declined = localStorage.getItem('chad-setup-no') || ''; } catch {}
+  if (declined === setup.mark) return;
+  if (M.hasData(state)) { render(); openSheet({ type: 'setup-confirm', setup }); }
+  else { state = await update(s => M.applySetup(s, setup.payload, setup.mark)); ui.setupToast = true; }
+}
 async function handleSetupLink() {
-  const m = location.hash.match(/^#setup=([A-Za-z0-9_-]+)/);
+  const m = location.hash.match(/^#setup=((?:z\.)?[A-Za-z0-9_-]+)/);
   if (!m) return false;
   // In iPhone Safari the link stays in the address so Add to Home Screen carries it into the installed app.
   const keep = isIOS && !standalone;
   if (!keep) history.replaceState(null, '', location.pathname + location.search);
-  else $('link[rel=manifest]')?.remove();
+  else { $('link[rel=manifest]')?.remove(); ui.setupHash = m[0]; }
   try {
-    const setup = readSetup(m[0]);
+    const setup = await readSetup(m[0]);
     if (keep) ui.pendingSetup = setup;
-    if (state.settings.setupApplied === setup.mark) return true;
-    if (M.hasData(state)) { render(); openSheet({ type: 'setup-confirm', setup }); }
-    else { state = await update(s => M.applySetup(s, setup.payload, setup.mark)); ui.setupToast = true; }
+    await stashSetup(m[1]);
+    await offerSetup(setup);
   } catch { toast('That setup link did not work'); }
   return true;
 }
+// Installed app opened with no link and nothing on it: look for the copy Safari left.
+async function handleStashedSetup() {
+  if (M.hasData(state) || state.settings.setupApplied) return;
+  const text = await stashedSetup(); if (!text) return;
+  try { await offerSetup(await readSetup('setup=' + text)); } catch {}
+}
 async function start() {
   try { state = await openStore(); } catch (e) { app.innerHTML = `<section class="card empty"><h2>Chad could not open your data</h2><p>${esc(e.message || '')}</p><p>Close other Chad tabs and open again. Your data is safe.</p></section>`; return; }
-  await handleSetupLink();
+  if (!(await handleSetupLink())) await handleStashedSetup();
   render(); renderInstall();
   if (ui.setupToast) { ui.setupToast = false; toast('Your setup is loaded ✅'); }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

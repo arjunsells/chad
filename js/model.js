@@ -1,5 +1,5 @@
 // Chad data model. Pure functions only, no DOM, no storage.
-export const VERSION = 3;
+export const VERSION = 4;
 export const XP_PER_TICK = 20;
 export const XP_PER_LEVEL = 200;
 export const COLORS = ['#a78bfa', '#4cc2ff', '#ff9f43', '#3ddc84', '#ff6b9d', '#ffc83d'];
@@ -18,19 +18,27 @@ export const diffDays = (a, b) => Math.round((utc(a) - utc(b)) / 864e5);
 export const validDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
 export const newId = () => (globalThis.crypto?.randomUUID?.() ?? 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2));
 
+export const blankTargets = () => ({ kcal: null, kcalMin: null, protein: null, water: null });
+const TARGET_KEYS = ['kcal', 'kcalMin', 'protein', 'water'];
 export const seed = () => ({
   schemaVersion: VERSION,
   revision: 0,
-  profile: { name: '' },
-  targets: { kcal: null, protein: null, water: null },
-  split: ['Shoulders + Arms', 'Chest + Back', 'Legs', 'Shoulders + Arms', 'Chest + Back', 'Legs', 'Rest'],
+  profile: { name: '', born: '', height: null, notes: [] },
+  targets: blankTargets(),
+  phases: [],
+  phase: '',
+  start: null,
+  review: null,
+  split: ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs', 'Rest'],
+  splitNotes: ['', '', '', '', '', '', ''],
+  gymNote: '',
   shots: [],
   shotNote: '',
   favourites: [],
   body: [],
   photos: [],
   days: {},
-  settings: { theme: 'dark', setupApplied: '' }
+  settings: { theme: 'dark', setupApplied: '', setupRev: 0 }
 });
 
 export const blankDay = () => ({ water: 0, food: [], sets: [], shots: [], gymSplit: '', gymDone: false });
@@ -52,20 +60,27 @@ function validShot(p) {
     && (p.plan === null || (Array.isArray(p.plan) && p.plan.every(r => obj(r) && Number.isInteger(r.from) && r.from >= 1 && str(r.units, 20) && str(r.note))))
     && (p.anchor === null || (obj(p.anchor) && validDate(p.anchor.date) && Number.isInteger(p.anchor.week) && p.anchor.week >= 1));
 }
+const validTargets = t => obj(t) && TARGET_KEYS.every(k => numOrNull(t[k]));
+const validPhase = p => obj(p) && str(p.id, 40) && str(p.name, 40) && (p.until === '' || validDate(p.until)) && str(p.note, 200) && validTargets(p.targets)
+  && (p.goal === null || (obj(p.goal) && num(p.goal.min) && num(p.goal.max) && str(p.goal.label, 60)));
 const validFood = f => obj(f) && str(f.id) && str(f.name) && str(f.emoji, 16) && [f.kcal, f.protein, f.carbs, f.fat].every(numOrNull);
 const validFavourite = f => validFood(f) && typeof f.estimate === 'boolean' && (f.photo === null || (str(f.photo, 400000) && f.photo.startsWith('data:image/')));
 
 export function validate(s) {
   if (!obj(s) || s.schemaVersion !== VERSION) fail('This backup is not a Chad backup');
-  if (!obj(s.profile) || !str(s.profile.name, 60)) fail('Invalid profile');
-  if (!obj(s.targets) || ![s.targets.kcal, s.targets.protein, s.targets.water].every(numOrNull)) fail('Invalid targets');
+  if (!obj(s.profile) || !str(s.profile.name, 60) || !(s.profile.born === '' || validDate(s.profile.born)) || !numOrNull(s.profile.height) || !Array.isArray(s.profile.notes) || s.profile.notes.length > 30 || !s.profile.notes.every(x => str(x, 200))) fail('Invalid profile');
+  if (!validTargets(s.targets)) fail('Invalid targets');
+  if (!Array.isArray(s.phases) || s.phases.length > 12 || !s.phases.every(validPhase) || !unique(s.phases) || !str(s.phase, 40) || (s.phase !== '' && !s.phases.some(p => p.id === s.phase))) fail('Invalid phases');
+  if (!(s.start === null || (obj(s.start) && num(s.start.weight) && str(s.start.label, 60)))) fail('Invalid start weight');
+  if (!(s.review === null || (obj(s.review) && Number.isInteger(s.review.day) && s.review.day >= 0 && s.review.day <= 6 && str(s.review.text, 200)))) fail('Invalid weekly check');
   if (!Array.isArray(s.split) || s.split.length !== 7 || !s.split.every(x => str(x, 60))) fail('Invalid gym split');
+  if (!Array.isArray(s.splitNotes) || s.splitNotes.length !== 7 || !s.splitNotes.every(x => str(x, 120)) || !str(s.gymNote, 200)) fail('Invalid gym notes');
   if (!Array.isArray(s.shots) || !s.shots.every(validShot) || !unique(s.shots)) fail('Invalid shots');
   if (!str(s.shotNote)) fail('Invalid shot note');
   if (!Array.isArray(s.favourites) || !s.favourites.every(validFavourite) || !unique(s.favourites)) fail('Invalid favourites');
   if (!Array.isArray(s.body) || !unique(s.body) || !s.body.every(b => obj(b) && str(b.id) && validDate(b.date) && numOrNull(b.weight) && numOrNull(b.waist))) fail('Invalid body log');
   if (!Array.isArray(s.photos) || !unique(s.photos) || !s.photos.every(p => obj(p) && str(p.id) && validDate(p.date) && typeof p.data === 'string' && p.data.startsWith('data:image/'))) fail('Invalid photos');
-  if (!obj(s.settings) || !['dark', 'light'].includes(s.settings.theme) || !str(s.settings.setupApplied)) fail('Invalid settings');
+  if (!obj(s.settings) || !['dark', 'light'].includes(s.settings.theme) || !str(s.settings.setupApplied) || !Number.isInteger(s.settings.setupRev) || s.settings.setupRev < 0) fail('Invalid settings');
   if (!obj(s.days)) fail('Invalid days');
   for (const [date, d] of Object.entries(s.days)) {
     if (!validDate(date) || !obj(d) || !num(d.water) || typeof d.gymDone !== 'boolean' || !str(d.gymSplit, 60)) fail('Invalid day ' + date);
@@ -99,34 +114,79 @@ function fromV2(o) {
   return s;
 }
 
+// Schema 3 → 4 adds the plan fields (phases, start weight, weekly check, gym notes). Nothing is removed.
+function fromV3(o) {
+  const d = seed();
+  return { ...o, schemaVersion: VERSION, profile: { ...d.profile, ...o.profile }, targets: { ...d.targets, ...o.targets }, phases: [], phase: '', start: null, review: null, splitNotes: d.splitNotes, gymNote: '', settings: { ...d.settings, ...o.settings } };
+}
+
 export function migrate(data) {
   if (!obj(data)) fail('Invalid backup');
   if (data.schemaVersion === 1 || data.schemaVersion === 2) data = fromV2(data);
+  else if (data.schemaVersion === 3) data = fromV3(data);
   return validate(data);
 }
 
 // ---------- one-time personal setup (from the link hash) ----------
-export function decodeSetup(text) {
-  const b64 = text.replace(/-/g, '+').replace(/_/g, '/');
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+// Link data is base64url JSON. A leading "z." means it is deflate-compressed first (keeps the link short enough to send in one message).
+export async function decodeSetup(text) {
+  const zipped = text.startsWith('z.'), b64 = text.slice(zipped ? 2 : 0).replace(/-/g, '+').replace(/_/g, '/');
+  let bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  if (zipped) bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   const payload = JSON.parse(new TextDecoder().decode(bytes));
   if (!obj(payload)) fail('Invalid setup link');
   return payload;
 }
 export function setupMark(text) { let h = 5381; for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0; return 'setup-' + h.toString(36); }
-// Replaces configuration only. Logs stay.
+// Sets configuration only. Logs stay. What the user already set on the phone (week, spot, a missing dose, missing food numbers, photos) is kept.
 export function applySetup(state, payload, mark) {
-  const s = structuredClone(state);
-  if (obj(payload.profile) && typeof payload.profile.name === 'string') s.profile.name = payload.profile.name;
-  if (obj(payload.targets)) for (const k of ['kcal', 'protein', 'water']) if (k in payload.targets) s.targets[k] = payload.targets[k];
+  const s = structuredClone(state), text = (v, max) => String(v ?? '').slice(0, max);
+  const numIn = v => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const targetsIn = t => { const out = blankTargets(); if (obj(t)) for (const k of TARGET_KEYS) out[k] = numIn(t[k]); return out; };
+  if (obj(payload.profile)) {
+    const p = payload.profile;
+    if (typeof p.name === 'string') s.profile.name = p.name;
+    if (typeof p.born === 'string') s.profile.born = p.born;
+    if ('height' in p) s.profile.height = p.height;
+    if (Array.isArray(p.notes)) s.profile.notes = p.notes;
+  }
+  if (obj(payload.targets)) for (const k of TARGET_KEYS) if (k in payload.targets) s.targets[k] = payload.targets[k];
+  if (Array.isArray(payload.phases)) {
+    s.phases = payload.phases.map(p => ({ id: text(p.id, 40), name: text(p.name, 40), until: p.until || '', note: text(p.note, 200), targets: targetsIn(p.targets), goal: obj(p.goal) ? { min: p.goal.min, max: p.goal.max, label: text(p.goal.label, 60) } : null }));
+    s.phase = typeof payload.phase === 'string' && s.phases.some(p => p.id === payload.phase) ? payload.phase : s.phases[0]?.id || '';
+    const now = currentPhase(s);
+    if (now) s.targets = { ...now.targets };
+  }
+  if ('start' in payload) s.start = payload.start;
+  if ('review' in payload) s.review = payload.review;
   if (Array.isArray(payload.split)) s.split = payload.split;
+  if (Array.isArray(payload.splitNotes)) s.splitNotes = payload.splitNotes;
+  if (typeof payload.gymNote === 'string') s.gymNote = payload.gymNote;
   if (typeof payload.shotNote === 'string') s.shotNote = payload.shotNote;
-  if (Array.isArray(payload.shots)) s.shots = payload.shots.map((p, i) => ({ ...blankShot(i), ...p }));
-  if (Array.isArray(payload.favourites)) s.favourites = payload.favourites.map(f => ({ id: newId(), emoji: '🍽️', kcal: null, protein: null, carbs: null, fat: null, estimate: false, photo: null, ...f }));
+  if (Array.isArray(payload.shots)) {
+    const old = new Map(s.shots.map(p => [p.id, p])), ids = new Set(payload.shots.map(p => p.id));
+    s.shots = [...payload.shots.map((p, i) => { const was = old.get(p.id), next = { ...blankShot(i), ...p }; if (was) { next.anchor = was.anchor; next.siteOffset = was.siteOffset < Math.max(1, next.sites.length) ? was.siteOffset : 0; if (!next.units) next.units = was.units; } return next; }), ...s.shots.filter(p => !ids.has(p.id))];
+  }
+  if (Array.isArray(payload.favourites)) {
+    const old = new Map(s.favourites.map(f => [f.id, f])), ids = new Set(payload.favourites.map(f => f.id));
+    s.favourites = [...payload.favourites.map(f => { const was = old.get(f.id), next = { id: newId(), emoji: '🍽️', kcal: null, protein: null, carbs: null, fat: null, estimate: false, photo: null, ...f }; if (was) { next.photo ??= was.photo; if (!favouriteReady(next) && favouriteReady(was)) Object.assign(next, { kcal: was.kcal, protein: was.protein, carbs: was.carbs, fat: was.fat, estimate: was.estimate }); } return next; }), ...s.favourites.filter(f => !ids.has(f.id))];
+  }
   s.settings.setupApplied = mark;
+  s.settings.setupRev = setupRev(payload);
   return validate(s);
 }
-export const hasData = s => s.shots.length > 0 || s.favourites.length > 0 || s.body.length > 0 || Object.keys(s.days).length > 0;
+export const setupRev = payload => (Number.isInteger(payload?.rev) && payload.rev > 0 ? payload.rev : 0);
+export const currentPhase = s => s.phases.find(p => p.id === s.phase) || null;
+// Switching phase loads that phase's targets. A phase with no targets yet shows "Set your target".
+export function setPhase(s, id) { const p = s.phases.find(x => x.id === id); if (!p) return; s.phase = id; s.targets = { ...p.targets }; }
+export function setTargets(s, targets) { s.targets = { ...blankTargets(), ...targets }; const p = currentPhase(s); if (p) p.targets = { ...s.targets }; }
+// 0 at the start weight, 1 at the top of the goal range. null when there is nothing to compare.
+export function goalProgress(s, avg) {
+  const goal = currentPhase(s)?.goal;
+  if (!goal || !s.start || avg === null || s.start.weight === goal.max) return null;
+  return Math.max(0, Math.min(1, (s.start.weight - avg) / (s.start.weight - goal.max)));
+}
+export const hasData = s => s.shots.length > 0 || s.favourites.length > 0 || s.body.length > 0 || s.phases.length > 0 || Object.keys(s.days).length > 0;
 
 // ---------- shots ----------
 export const dueShots = (s, date) => s.shots.filter(p => p.days.includes(dow(date)));
@@ -159,7 +219,7 @@ export function siteFor(s, shot, date, today) {
 
 // ---------- food ----------
 export const totals = d => d.food.reduce((a, f) => ({ kcal: a.kcal + f.kcal, protein: a.protein + f.protein, carbs: a.carbs + (f.carbs || 0), fat: a.fat + (f.fat || 0) }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
-export const favouriteReady = f => f.kcal !== null && f.protein !== null;
+export function favouriteReady(f) { return f.kcal !== null && f.protein !== null; }
 
 // ---------- gym ----------
 export const splitToday = (s, date) => s.split[(dow(date) + 6) % 7];

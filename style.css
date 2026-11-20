@@ -256,3 +256,24 @@ form { display: flex; flex-direction: column; gap: 12px; }
   #nav a { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* v3: phase, plan, goal */
+.phase { display: flex; flex-wrap: wrap; gap: 8px; text-decoration: none; color: inherit; min-height: 44px; align-items: center; }
+.pill.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); text-transform: uppercase; letter-spacing: .06em; }
+.review { text-decoration: none; color: inherit; border-color: var(--accent); gap: 4px; }
+.review strong { font-size: 20px; }
+.review span { color: var(--muted); font-size: 16px; font-weight: 600; }
+.range { font-size: 14px; font-weight: 600; }
+.weekRow.now > strong { color: var(--accent); }
+.weekRow.now .planDay b::after { content: ' · today'; color: var(--accent); font-weight: 700; }
+.planDay { flex-direction: column; flex-wrap: nowrap !important; gap: 2px !important; }
+.planDay b { font-size: 18px; }
+.planDay small { font-size: 14px; font-weight: 600; }
+.goalRow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.goalRow > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.goalRow > div:only-child { grid-column: 1 / -1; }
+.goalRow small { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.goalRow strong { font-size: 34px; font-weight: 800; line-height: 1.05; letter-spacing: -.02em; }
+.goalRow em { font-style: normal; font-size: 18px; color: var(--muted); }
+.goalRow span { color: var(--muted); font-size: 14px; font-weight: 600; }
+.notes { margin: 0; padding: 0 0 0 20px; color: var(--muted); font-size: 16px; font-weight: 600; display: flex; flex-direction: column; gap: 4px; }
