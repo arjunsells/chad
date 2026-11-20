@@ -1,7 +1,7 @@
 // Bump CACHE whenever an app file changes.
-const CACHE = 'chad-shell-v3';
+const CACHE = 'chad-shell-v4';
 const SHELL = ['./', './index.html', './style.css', './js/app.js', './js/model.js', './js/store.js', './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png', './assets/apple-touch-icon.png'];
-self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
+self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL).then(() => cache.add('./seed.enc.json').catch(() => {}))).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('chad-shell-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);

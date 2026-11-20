@@ -221,6 +221,25 @@ form { display: flex; flex-direction: column; gap: 12px; }
 @keyframes rise { from { transform: translateY(40px); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
 
+/* PIN lock */
+#lock { position: fixed; inset: 0; z-index: 35; background: var(--bg); display: grid; place-items: center; overflow-y: auto; padding: calc(env(safe-area-inset-top) + 16px) 22px calc(env(safe-area-inset-bottom) + 16px); }
+#lock[hidden] { display: none; }
+.lockCard { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.lockCard h1 { font-size: 32px; }
+.lockMsg { min-height: 26px; font-size: 19px; font-weight: 700; color: var(--muted); }
+.lockMsg.bad { color: var(--bad); }
+.dots { display: flex; gap: 16px; padding: 6px 0; }
+.dots i { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--line); transition: background .12s, border-color .12s; }
+.dots i.on { background: var(--accent); border-color: var(--accent); }
+.dots.wobble { animation: wobble .45s; }
+@keyframes wobble { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-14px); } 40% { transform: translateX(12px); } 60% { transform: translateX(-9px); } 80% { transform: translateX(6px); } }
+.keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; width: 100%; }
+.keys button { height: 76px; border-radius: 22px; background: var(--card); border: 1px solid var(--line); font-size: 32px; font-weight: 800; transition: transform .1s; }
+.keys button:active { transform: scale(.95); background: var(--card2); }
+.keys button.soft { background: none; border-color: transparent; color: var(--muted); font-size: 20px; }
+.keys.busy { opacity: .45; pointer-events: none; }
+@media (max-height: 700px) { .keys button { height: 62px; } .lockCard { gap: 10px; } .lockCard .bigEmoji { font-size: 40px; } }
+
 /* install card */
 #install { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: grid; place-items: center; overflow-y: auto; padding: calc(env(safe-area-inset-top) + 20px) 22px calc(env(safe-area-inset-bottom) + 20px); }
 #install[hidden] { display: none; }

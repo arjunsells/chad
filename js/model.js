@@ -137,6 +137,16 @@ export async function decodeSetup(text) {
   if (!obj(payload)) fail('Invalid setup link');
   return payload;
 }
+// The personal plan ships encrypted (seed.enc.json). The PIN never leaves the phone: PBKDF2-SHA256 → AES-256-GCM.
+const unb64 = t => Uint8Array.from(atob(t), c => c.charCodeAt(0));
+export const validSeedBox = b => obj(b) && b.v === 1 && Number.isInteger(b.iter) && b.iter >= 1000 && b.iter <= 5000000 && Number.isInteger(b.digits) && b.digits >= 4 && b.digits <= 12 && [b.salt, b.iv, b.ct].every(x => typeof x === 'string' && /^[A-Za-z0-9+/]+=*$/.test(x));
+// Returns the setup text. A wrong PIN throws.
+export async function openSeed(box, pin) {
+  if (!validSeedBox(box)) fail('Invalid plan file');
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(pin)), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(box.salt), iterations: box.iter }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, key, unb64(box.ct)));
+}
 export function setupMark(text) { let h = 5381; for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0; return 'setup-' + h.toString(36); }
 // Sets configuration only. Logs stay. What the user already set on the phone (week, spot, a missing dose, missing food numbers, photos) is kept.
 export function applySetup(state, payload, mark) {

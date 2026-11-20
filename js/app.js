@@ -2,7 +2,7 @@ import * as M from './model.js';
 import { openStore, update, read } from './store.js';
 
 const $ = (q, el = document) => el.querySelector(q);
-const app = $('#app'), nav = $('#nav'), sheetEl = $('#sheet'), installEl = $('#install');
+const app = $('#app'), nav = $('#nav'), sheetEl = $('#sheet'), installEl = $('#install'), lockEl = $('#lock');
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = n => Math.round(n).toLocaleString('en-AU');
 const num = v => { const x = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(x) && x >= 0 ? x : null; };
@@ -16,7 +16,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const REST_SECONDS = 90, WATER_STEP = 500;
 
 let state, today = M.dateKey(), toastTimer, lastRoute = '';
-const ui = { sheet: null, vals: {}, editFav: false, rest: null, pendingSetup: null, route: null, setupHash: '' };
+const ui = { sheet: null, vals: {}, editFav: false, rest: null, pendingSetup: null, route: null, setupHash: '', lock: null };
 
 const route = () => { const r = ui.setupHash ? ui.route : location.hash.slice(1); return ROUTES.includes(r) ? r : 'today'; };
 const day = () => state.days[today] || M.blankDay();
@@ -209,8 +209,8 @@ function viewSettings() {
   <h2>Daily targets${phase ? ' · ' + esc(phase.name) : ''}</h2>${numField('kcal', 'Calories (kcal)', t.kcal)}${numField('kcalMin', 'Calories, low end (optional)', t.kcalMin)}${numField('protein', 'Protein (g)', t.protein)}${numField('water', 'Water (L)', t.water)}<button class="big primary">Save</button></form>
   <section class="card"><h2>Look</h2><div class="seg"><button data-action="theme" data-value="dark" class="${state.settings.theme === 'dark' ? 'on' : ''}">🌙 Dark</button><button data-action="theme" data-value="light" class="${state.settings.theme === 'light' ? 'on' : ''}">☀️ Light</button></div></section>
   <section class="card"><h2>Backup</h2><p class="sub">Your data lives on this phone only. Save a backup file now and then.</p><button class="big quiet" data-action="export">⬇️ Save backup</button><label class="big quiet fileBtn">⬆️ Load backup<input type="file" accept="application/json,.json" data-file="import" hidden></label></section>
-  <section class="card"><h2>More</h2><button class="big quiet" data-action="shots-manage">💉 Edit shots</button><button class="big quiet" data-action="split-edit">🏋️ Edit gym week</button><button class="big quiet" data-action="setup-open">🔗 Paste setup link</button>${standalone ? '' : '<button class="big quiet" data-action="install-help">📲 Add to Home Screen</button>'}</section>
-  ${disclaimer()}<p class="foot">Chad v3</p>`;
+  <section class="card"><h2>More</h2><button class="big quiet" data-action="shots-manage">💉 Edit shots</button><button class="big quiet" data-action="split-edit">🏋️ Edit gym week</button><button class="big quiet" data-action="plan-reload">🔄 Reload my plan</button><button class="big quiet" data-action="setup-open">🔗 Paste setup link</button>${standalone ? '' : '<button class="big quiet" data-action="install-help">📲 Add to Home Screen</button>'}</section>
+  ${disclaimer()}<p class="foot">Chad v4</p>`;
 }
 
 // ---------- sheets ----------
@@ -261,6 +261,39 @@ function renderInstall(force = false) {
   <svg class="phone" viewBox="0 0 200 150" aria-hidden="true"><rect x="60" y="4" width="80" height="142" rx="14" class="ph"/><rect x="68" y="14" width="64" height="100" rx="6" class="scr"/><g class="share"><rect x="90" y="126" width="20" height="14" rx="3"/><path d="M100 132v-14m-5 5 5-5 5 5"/></g><path class="arrow" d="M160 96c0 22-14 34-36 36m8-7-9 7 9 6"/></svg>
   <ol><li><b>1</b><span>Tap <strong>Share</strong> ⬆️</span></li><li><b>2</b><span>Tap <strong>Add to Home Screen</strong></span></li><li><b>3</b><span>Tap <strong>Add</strong></span></li></ol>
   ${ui.pendingSetup ? '<p class="ok">✅ Your personal setup comes with it.</p><button class="big quiet" data-action="setup-copy">Copy setup link (backup)</button>' : ''}<button class="link" data-action="install-skip">Not now</button></div>`;
+}
+
+// ---------- PIN lock ----------
+// The plan ships encrypted in seed.enc.json. The PIN opens it once. After that the data lives on this phone.
+let seedBox;
+async function loadSeedBox() {
+  if (seedBox !== undefined) return seedBox;
+  try { const r = await fetch('seed.enc.json'); const box = r.ok ? await r.json() : null; seedBox = M.validSeedBox(box) && crypto.subtle ? box : null; } catch { seedBox = null; }
+  return seedBox;
+}
+const pinSkipped = () => { try { return !!localStorage.getItem('chad-pin-skip'); } catch { return false; } };
+const untouched = () => !M.hasData(state) && !state.profile.name && !state.settings.setupApplied;
+function renderLock() {
+  const k = ui.lock; lockEl.hidden = !k;
+  if (!k) { lockEl.innerHTML = ''; return; }
+  const key = d => `<button type="button" data-action="lock-key" data-d="${d}">${d}</button>`;
+  lockEl.innerHTML = `<div class="lockCard" role="dialog" aria-modal="true" aria-label="Enter your PIN"><p class="bigEmoji" aria-hidden="true">${k.busy ? '🔓' : '🔒'}</p><h1>Enter your PIN</h1>
+  <p class="lockMsg ${k.bad ? 'bad' : ''}" role="status">${k.busy ? 'Unlocking…' : k.bad ? 'Try again' : `${k.box.digits} numbers`}</p>
+  <div class="dots ${k.bad && !k.pin ? 'wobble' : ''}" aria-hidden="true">${Array.from({ length: k.box.digits }, (_, i) => `<i class="${i < k.pin.length ? 'on' : ''}"></i>`).join('')}</div>
+  <div class="keys ${k.busy ? 'busy' : ''}">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(key).join('')}${k.mode === 'reload' ? '<button type="button" class="soft" data-action="lock-cancel">Cancel</button>' : '<span></span>'}${key(0)}<button type="button" class="soft" data-action="lock-del" aria-label="Delete">⌫</button></div>
+  ${k.mode === 'first' ? '<button class="link" data-action="lock-skip">No PIN? Start empty</button>' : ''}</div>`;
+}
+function closeLock() { ui.lock = null; renderLock(); }
+async function lockDigit(d) {
+  const k = ui.lock; if (!k || k.busy || k.pin.length >= k.box.digits) return;
+  k.pin += d; k.bad = false; renderLock();
+  if (k.pin.length < k.box.digits) return;
+  k.busy = true; renderLock();
+  let setup;
+  try { setup = await readSetup('setup=' + await M.openSeed(k.box, k.pin)); } catch { k.pin = ''; k.busy = false; k.bad = true; buzz([60, 40, 60]); renderLock(); return; }
+  if (k.mode === 'reload') { closeLock(); await commit(s => M.applySetup(s, setup.payload, setup.mark), 'Plan reloaded ✅'); return; }
+  try { state = await update(s => M.applySetup(s, setup.payload, setup.mark)); } catch (e) { k.pin = ''; k.busy = false; renderLock(); toast(e.message || 'Could not save'); return; }
+  closeLock(); history.replaceState(null, '', location.pathname + location.search); render(); renderInstall(); toast('Your plan is loaded ✅'); confetti();
 }
 
 // ---------- actions ----------
@@ -361,6 +394,11 @@ const actions = {
   'split-edit': () => openSheet({ type: 'split-edit' }),
   'install-help': () => renderInstall(true),
   'install-skip'() { localStorage.setItem('chad-install-skip', '1'); renderInstall(); },
+  async 'plan-reload'() { const box = await loadSeedBox(); if (!box) return toast('No plan in this app. Use your setup link.'); ui.lock = { mode: 'reload', box, pin: '', busy: false, bad: false }; renderLock(); },
+  'lock-key': el => lockDigit(el.dataset.d),
+  'lock-del'() { const k = ui.lock; if (!k || k.busy) return; k.pin = k.pin.slice(0, -1); k.bad = false; renderLock(); },
+  'lock-cancel': closeLock,
+  'lock-skip'() { try { localStorage.setItem('chad-pin-skip', '1'); } catch {} closeLock(); renderInstall(); },
   'sheet-close': closeSheet
 };
 
@@ -408,7 +446,7 @@ document.addEventListener('click', e => {
 document.addEventListener('submit', e => { e.preventDefault(); buzz(); Promise.resolve(forms[e.target.dataset.form]?.(new FormData(e.target), e.target)).catch(err => toast(err.message || 'Something went wrong')); });
 document.addEventListener('change', e => { const input = e.target.closest('[data-file]'); if (!input || !input.files[0]) return; files[input.dataset.file](input.files[0], input).catch(err => toast(err instanceof SyntaxError ? 'That file is not a backup' : err.message || 'That file did not work')).finally(() => { input.value = ''; }); });
 document.addEventListener('input', e => { const b = e.target.dataset?.bind; if (b) ui.vals[b] = e.target.value; });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.sheet) closeSheet(); if (e.key === 'Enter' && e.target.dataset?.bind) e.target.blur(); });
+document.addEventListener('keydown', e => { if (ui.lock) { if (/^\d$/.test(e.key)) lockDigit(e.key); else if (e.key === 'Backspace') actions['lock-del'](); else if (e.key === 'Escape' && ui.lock.mode === 'reload') closeLock(); return; } if (e.key === 'Escape' && ui.sheet) closeSheet(); if (e.key === 'Enter' && e.target.dataset?.bind) e.target.blur(); });
 
 // Steppers: tap once, or hold to run.
 let holdTimer, holdLoop;
@@ -474,7 +512,10 @@ async function handleStashedSetup() {
 async function start() {
   try { state = await openStore(); } catch (e) { app.innerHTML = `<section class="card empty"><h2>Chad could not open your data</h2><p>${esc(e.message || '')}</p><p>Close other Chad tabs and open again. Your data is safe.</p></section>`; return; }
   if (!(await handleSetupLink())) await handleStashedSetup();
-  render(); renderInstall();
+  render();
+  // Nothing on this phone yet: ask for the PIN once and load the plan that ships with the app.
+  const box = untouched() && !pinSkipped() ? await loadSeedBox() : null;
+  if (box) { ui.lock = { mode: 'first', box, pin: '', busy: false, bad: false }; renderLock(); } else renderInstall();
   if (ui.setupToast) { ui.setupToast = false; toast('Your setup is loaded ✅'); }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.storage?.persist?.().catch(() => {});
